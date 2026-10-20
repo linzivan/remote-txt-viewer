@@ -2,6 +2,7 @@ param(
   [string]$Out,
   [string]$ConfigDir,
   [int]$WaitMs = 4000,
+  [string]$Exe,
   [switch]$NoLaunch
 )
 
@@ -76,10 +77,11 @@ public class WinShot
 
 if (-not ("WinShot" -as [type])) { Add-Type -TypeDefinition $code -Language CSharp }
 
-$exe = Join-Path $root "RemoteTxtViewer.exe"
+$exe = if ($Exe) { $Exe } else { Join-Path $root "RemoteTxtViewer.exe" }
 
 if (-not $NoLaunch) {
-  Get-Process RemoteTxtViewer -ErrorAction SilentlyContinue | Stop-Process -Force
+  $procName = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+  Get-Process $procName -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-Sleep -Milliseconds 400
   $env:RTV_CONFIG_DIR = $ConfigDir
   $env:RTV_NO_ACTIVATE = "1"

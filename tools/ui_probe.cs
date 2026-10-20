@@ -33,9 +33,25 @@ internal static class UiProbe
         string cmd = args.Length > 0 ? args[0].ToLowerInvariant() : "shot";
         string outPath = args.Length > 1 ? args[1] : System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "probe.png");
 
-        Process[] ps = Process.GetProcessesByName("RemoteTxtViewer");
-        if (ps.Length == 0) { Console.WriteLine("NOT_RUNNING"); return 2; }
-        Process p = ps[0];
+        Process p = null;
+        string pidEnv = Environment.GetEnvironmentVariable("RTV_PID");
+        if (!string.IsNullOrEmpty(pidEnv))
+        {
+            int wantPid;
+            if (int.TryParse(pidEnv, out wantPid))
+            {
+                try { p = Process.GetProcessById(wantPid); }
+                catch { p = null; }
+            }
+        }
+        if (p == null)
+        {
+            string nameEnv = Environment.GetEnvironmentVariable("RTV_PROC");
+            string procName = string.IsNullOrEmpty(nameEnv) ? "RemoteTxtViewer" : nameEnv;
+            Process[] ps = Process.GetProcessesByName(procName);
+            if (ps.Length == 0) { Console.WriteLine("NOT_RUNNING(" + procName + ")"); return 2; }
+            p = ps[0];
+        }
 
         int w, h;
         IntPtr hWnd = MainWindow((uint)p.Id, out w, out h);

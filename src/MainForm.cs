@@ -17,6 +17,7 @@ namespace RemoteTxtViewer
         private RemoteStat _lastStat;
         private Snapshot _lastSnap;
         private string _lastText = "";
+        private bool _hasLoaded;        // 是否已成功读取过一次（空文件也算，不能靠内容长度判断）
         private bool _busy;
         private bool _closing;
 
@@ -862,9 +863,9 @@ namespace RemoteTxtViewer
             if (!_cfg.IsReady) { WarnNoEdit("还没有配置连接"); return; }
             if (_viewing != null || _pinnedLabel.Length > 0) ReturnToLive();
 
-            if (_lastText.Length == 0)
+            if (!_hasLoaded)
             {
-                WarnNoEdit("等首次读取完成后再编辑");
+                WarnNoEdit("还没成功读取到文件内容，稍后再试");
                 return;
             }
 
@@ -1085,6 +1086,7 @@ namespace RemoteTxtViewer
 
             _lastStat = null;
             _lastText = "";
+            _hasLoaded = false;
             _rtb.Clear();
             _lblNew.Text = "";
             _lblSize.Text = "";
@@ -1215,17 +1217,18 @@ namespace RemoteTxtViewer
 
             bool same = (newText == oldText);
             bool pureAppend = false;
-            int oldLines = 0;
+            int oldLines = CountLines(oldText);
 
-            if (oldText.Length > 0 && newText.Length > oldText.Length
+            // 空文件（oldText 为空串）也算"在新内容前面"，所以不再要求 oldText.Length > 0
+            if (newText.Length > oldText.Length
                 && string.CompareOrdinal(newText, 0, oldText, 0, oldText.Length) == 0)
             {
                 pureAppend = true;
-                oldLines = CountLines(oldText);
             }
 
             int lines = CountLines(newText);
-            bool baseline = (oldText.Length == 0);
+            bool baseline = !_hasLoaded;    // 本次会话第一次成功读取
+            _hasLoaded = true;
 
             bool atBottom = _chkFollow.Checked || IsLastLineVisible();
 
@@ -1260,7 +1263,7 @@ namespace RemoteTxtViewer
                 if (_viewing == null && _pinnedLabel.Length == 0)
                 {
                     _rtb.Text = newText;
-                    if (pureAppend && oldLines > 0) HighlightFromLine(oldLines);
+                    if (pureAppend && !baseline) HighlightFromLine(oldLines);
                     if (atBottom) ScrollToBottom();
                 }
             }
@@ -1323,7 +1326,7 @@ namespace RemoteTxtViewer
 
         private void HighlightFromLine(int lineIndex)
         {
-            if (lineIndex <= 0) return;
+            if (lineIndex < 0) return;
             int ch = _rtb.GetFirstCharIndexFromLine(lineIndex);
             if (ch < 0) return;
             int len = _rtb.TextLength - ch;
