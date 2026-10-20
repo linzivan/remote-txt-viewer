@@ -61,6 +61,9 @@ namespace RemoteTxtViewer
 
         private Panel _host;
         private RichTextBox _rtb;
+        private Panel _gutter;          // 左侧行号栏
+        private Font _gutterFont;
+        private int _gutterDigits = 3;  // 当前行号位数（决定栏宽）
 
         private Panel _pane;
         private Label _paneTitle;
@@ -147,6 +150,7 @@ namespace RemoteTxtViewer
             _uiFont = SafeFont("Microsoft YaHei UI", 9f, FontStyle.Regular);
             _contentFont = SafeFont("Consolas", _cfg.FontSize, FontStyle.Regular);
             _monoFont = SafeFont("Consolas", 9f, FontStyle.Regular);
+            _gutterFont = SafeFont("Consolas", Math.Max(7f, _cfg.FontSize - 1f), FontStyle.Regular);
         }
 
         // ================= 界面 =================
@@ -306,7 +310,7 @@ namespace RemoteTxtViewer
             _rtb.ScrollBars = RichTextBoxScrollBars.Both;
             _rtb.DetectUrls = false;
             _rtb.HideSelection = false;
-            _rtb.ShowSelectionMargin = true;
+            _rtb.ShowSelectionMargin = false;
             _rtb.BackColor = Color.White;
             _rtb.ForeColor = Color.FromArgb(28, 32, 38);
             _rtb.Font = _contentFont;
@@ -321,7 +325,26 @@ namespace RemoteTxtViewer
             cm.Items.Add("另存为本地文件...", null, delegate { SaveSnapshotLocal(); });
             _rtb.ContextMenuStrip = cm;
 
+            // ---- 行号栏（Dock=Left，必须在 _rtb 之后添加才会先停靠）----
+            _gutter = new Panel();
+            _gutter.Dock = DockStyle.Left;
+            _gutter.Width = S(38);
+            _gutter.BackColor = Color.FromArgb(248, 249, 251);
+            _gutter.Paint += OnGutterPaint;
+
+            // 滚动、改内容、缩放、换字体都要重画行号（行号位置依赖文本布局）
+            _rtb.VScroll += delegate { if (_gutter != null) _gutter.Invalidate(); };
+            _rtb.TextChanged += delegate
+            {
+                if (_gutter == null) return;
+                UpdateGutterWidth();
+                _gutter.Invalidate();
+            };
+            _rtb.Resize += delegate { if (_gutter != null) _gutter.Invalidate(); };
+            _rtb.FontChanged += delegate { if (_gutter != null) _gutter.Invalidate(); };
+
             _host.Controls.Add(_rtb);
+            _host.Controls.Add(_gutter);
         }
 
         private void BuildPane()
@@ -360,6 +383,125 @@ namespace RemoteTxtViewer
             _pane.Controls.Add(_paneList);
             _pane.Controls.Add(back);
             _pane.Controls.Add(_paneTitle);
+        }
+
+        // ---------- 行号栏 ----------
+
+        /// <summary>正文换底色时行号栏要跟着换，否则编辑态/历史态会出现冷暖色割裂感。</summary>
+        private void SetContentBackColor(Color body, Color gutterColor)
+        {
+            _rtb.BackColor = body;
+            if (_gutter != null)
+            {
+                _gutter.BackColor = gutterColor;
+                _gutter.Invalidate();
+            }
+        }
+
+        private void OnGutterPaint(object sender, PaintEventArgs e)
+        {
+            if (_rtb == null || _gutterFont == null) return;
+
+            Graphics g = e.Graphics;
+            g.Clear(_gutter.BackColor);
+
+            // 右边缘分隔线
+            using (Pen pen = new Pen(Color.FromArgb(208, 213, 222)))
+                g.DrawLine(pen, _gutter.Width - 1, 0, _gutter.Width - 1, _gutter.Height);
+
+            string text = _rtb.Text;
+            int len = text == null ? 0 : text.Length;
+
+            int firstLine, lastLine;
+            try
+            {
+                int firstChar = _rtb.GetCharIndexFromPosition(new Point(1, 1));
+                int lastChar = _rtb.GetCharIndexFromPosition(
+                    new Point(1, Math.Max(1, _rtb.ClientSize.Height - 1)));
+                firstLine = _rtb.GetLineFromCharIndex(firstChar);
+                lastLine = _rtb.GetLineFromCharIndex(lastChar);
+            }
+            catch { return; }
+
+            if (firstLine < 0) firstLine = 0;
+            if (lastLine < firstLine) lastLine = firstLine;
+
+            // 可见区第一行的起始字符 → 推出它的逻辑行号
+            int startCh = 0;
+            try { startCh = _rtb.GetFirstCharIndexFromLine(firstLine); }
+            catch { }
+            if (startCh < 0) startCh = 0;
+
+            int lineNo = 1;
+            for (int i = 0; i < startCh && i < len; i++)
+                if (text[i] == '\n') lineNo++;
+
+            // 行号字体比正文小，垂直方向补一点偏移让基线对齐
+            int dy = (_rtb.Font.Height - _gutterFont.Height) / 2;
+            if (dy < 0) dy = 0;
+
+            bool wrap = _rtb.WordWrap;
+
+            for (int ln = firstLine; ln <= lastLine; ln++)
+            {
+                int ch;
+                try { ch = _rtb.GetFirstCharIndexFromLine(ln); }
+                catch { break; }
+                if (ch < 0 || ch > len) break;
+
+                Point pos;
+                try { pos = _rtb.GetPositionFromCharIndex(ch); }
+                catch { break; }
+
+                // 只有"逻辑行首"才画数字：折行产生的续行留空，避免同一行出现多个号
+                bool isLogicalStart = (ch == 0) || (ch > 0 && text[ch - 1] == '\n');
+                if (isLogicalStart || !wrap)
+                    DrawLineNo(g, lineNo, pos.Y + dy);
+
+                // 推进逻辑行号：数一数这个显示行里包含了几个换行符
+                int nextCh;
+                try { nextCh = _rtb.GetFirstCharIndexFromLine(ln + 1); }
+                catch { nextCh = -1; }
+                if (nextCh < 0 || nextCh > len) nextCh = len;
+
+                for (int i = ch; i < nextCh; i++)
+                    if (text[i] == '\n') lineNo++;
+            }
+
+            // 空文件：没有字符可定位，也要给编辑状态显示"1"
+            if (len == 0)
+                DrawLineNo(g, 1, dy);
+        }
+
+        private void DrawLineNo(Graphics g, int number, int y)
+        {
+            string label = number.ToString();
+            Size sz = TextRenderer.MeasureText(label, _gutterFont);
+            int x = _gutter.Width - sz.Width - S(8);
+            if (x < S(2)) x = S(2);
+
+            TextRenderer.DrawText(g, label, _gutterFont, new Point(x, y),
+                Color.FromArgb(152, 158, 168), TextFormatFlags.NoPadding);
+        }
+
+        private void UpdateGutterWidth()
+        {
+            if (_gutter == null || _gutterFont == null) return;
+
+            int lines = CountLines(_rtb.Text);
+            if (lines < 1) lines = 1;
+
+            int digits = lines.ToString().Length;
+            if (digits < 3) digits = 3;
+            if (digits == _gutterDigits) return;   // 位数没变就不动宽度，避免抖动
+
+            _gutterDigits = digits;
+            string sample = new string('9', digits);
+            Size sz = TextRenderer.MeasureText(sample, _gutterFont);
+
+            int w = sz.Width + S(18);
+            if (w < S(34)) w = S(34);
+            _gutter.Width = w;
         }
 
         private void BuildStatus()
@@ -414,6 +556,9 @@ namespace RemoteTxtViewer
             FillIntervals();
 
             _rtb.Font = _contentFont;
+            _gutterDigits = 0;
+            UpdateGutterWidth();
+            if (_gutter != null) _gutter.Invalidate();
             _lblHeader.Text = _cfg.DisplayName;
             _lblRight.Text = _cfg.DisplayName;
 
@@ -637,7 +782,11 @@ namespace RemoteTxtViewer
 
             _cfg.FontSize = nf;
             _contentFont = SafeFont("Consolas", _cfg.FontSize, FontStyle.Regular);
+            _gutterFont = SafeFont("Consolas", Math.Max(7f, _cfg.FontSize - 1f), FontStyle.Regular);
             _rtb.Font = _contentFont;
+            _gutterDigits = 0;          // 强制按新字号重算行号栏宽度
+            UpdateGutterWidth();
+            if (_gutter != null) _gutter.Invalidate();
             _cfg.Save();
         }
 
@@ -731,7 +880,7 @@ namespace RemoteTxtViewer
             _viewing = e;
             _pinnedLabel = "";
 
-            _rtb.BackColor = Color.FromArgb(255, 252, 238);
+            SetContentBackColor(Color.FromArgb(255, 252, 238), Color.FromArgb(251, 247, 232));
             _rtb.Text = _changeLog.GetText(e);
 
             _lblStatus.Text = "◀ 历史 " + e.LocalTime.ToString("HH:mm:ss") + " · 点此返回实时";
@@ -753,7 +902,7 @@ namespace RemoteTxtViewer
             _viewing = null;
             _pinnedLabel = label;
 
-            _rtb.BackColor = Color.FromArgb(245, 248, 255);
+            SetContentBackColor(Color.FromArgb(245, 248, 255), Color.FromArgb(236, 241, 250));
             _rtb.Text = text ?? "";
             _rtb.SelectionStart = 0;
             _rtb.ScrollToCaret();
@@ -773,7 +922,7 @@ namespace RemoteTxtViewer
 
             _viewing = null;
             _pinnedLabel = "";
-            _rtb.BackColor = Color.White;
+            SetContentBackColor(Color.White, Color.FromArgb(248, 249, 251));
 
             SetStatus("● 已连接", Color.FromArgb(22, 130, 62));
             _lblStatus.ToolTipText = "";
@@ -877,7 +1026,7 @@ namespace RemoteTxtViewer
 
             _btnSave.Enabled = true;
             _rtb.ReadOnly = false;
-            _rtb.BackColor = Color.FromArgb(255, 253, 244);
+            SetContentBackColor(Color.FromArgb(255, 253, 244), Color.FromArgb(251, 247, 235));
             _rtb.Focus();
             _rtb.SelectionStart = _rtb.TextLength;
 
@@ -920,7 +1069,7 @@ namespace RemoteTxtViewer
 
             _btnSave.Enabled = false;
             _rtb.ReadOnly = true;
-            _rtb.BackColor = Color.White;
+            SetContentBackColor(Color.White, Color.FromArgb(248, 249, 251));
             _rtb.Text = _lastText;
             ScrollToBottom();
 
