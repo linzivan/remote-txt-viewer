@@ -1,8 +1,8 @@
 # 远程文本监视器（RemoteTxtViewer）
 
-**881 KB 单文件 Windows 原生小工具**：通过 SSH/SFTP 连到服务器，常驻显示某个 txt 文件的最新内容，
+**单文件 Windows 原生小工具**：通过 SSH/SFTP 连到服务器，常驻显示某个 txt 文件的最新内容，
 文件一变就自动刷新、新增行标黄，并把每次变更记进右侧时间线（保留 24 小时），可回看任意时刻、
-可收藏存档。
+可收藏存档。**也可以直接编辑并安全写回服务器**（带冲突保护），适合在几台电脑之间同步同一份笔记。
 
 不装 .NET、不装 Python、不装浏览器内核 —— 用的是 Windows 自带的 .NET Framework 4.8，双击即开。
 
@@ -57,6 +57,8 @@
 
 ### 工具栏
 
+- **编辑**：切换编辑模式（`Ctrl+E`），见下文「编辑与写回」
+- **保存**：编辑模式下才可用，写回服务器（`Ctrl+S`）
 - **自动刷新**：按下（浅蓝）表示开启
 - **跟随末尾**：新内容出现时自动滚到最后一行；关掉则你往上翻看时不会被强行拉回底部
 - **自动换行**：长行折行；关掉保留横向滚动条（看日志通常关掉更整齐）
@@ -71,6 +73,8 @@
 |---|---|
 | `F5` | 立即刷新 |
 | `Ctrl + O` | 连接设置 |
+| `Ctrl + E` | 切换编辑模式 |
+| `Ctrl + S` | 保存到服务器（编辑模式） |
 | `Ctrl + D` | 收藏当前内容 |
 | `Ctrl + B` | 打开收藏夹 |
 | `Ctrl + H` | 显示/隐藏时间线 |
@@ -79,6 +83,54 @@
 | 右键 | 复制、全选、收藏、另存为 |
 
 ---
+
+## 编辑与写回（可选）
+
+默认是只读监视。需要改内容时：
+
+1. 点工具栏 **「编辑」**（或 `Ctrl+E`）——正文变成可编辑、底色转淡黄
+2. 直接改，改完点 **「保存」**（或 `Ctrl+S`）
+3. 保存成功会自动退出编辑模式，状态栏显示 `✔ 已保存`
+
+### 写回是安全的
+
+保存时**不是**直接覆盖目标文件，而是：
+
+```
+上传到 .app.log.rtv-tmp-<时间戳>
+  → 把原文件改名成 .app.log.rtv-bak-<时间戳>
+  → 临时文件改名成目标文件
+  → 删掉备份
+```
+
+任何一步失败都会回滚，**服务器上任何时刻都存在一份完整文件**，断网也不会写出半个文件。
+写回时还会沿用原文件的编码（UTF-8 / UTF-8 BOM / GBK / UTF-16），中文不会变乱码。
+
+### 冲突保护
+
+编辑期间如果**另一台电脑也改了这个文件**：
+
+- 正文不会被强行覆盖（你正在敲的内容保得住）
+- 状态栏出现红色 `⚠ 远端已更新（保存时会提示冲突）`
+- 点保存时弹对话框，**左右并排**对比「服务器当前版本」和「我的修改」（滚动联动），四个选择：
+
+| 选择 | 结果 |
+|---|---|
+| **用我的覆盖** | 以你的版本为准（会二次确认，对方改动丢失） |
+| **用服务器版本** | 放弃你的修改，载入服务器上的最新内容 |
+| **我的另存为...** | 把你这版存成本地文件，仍留在编辑模式 |
+| **取消** | 什么都不做，继续编辑 |
+
+只有在你确认之后才会写入——默认绝不会静默覆盖别人的改动。
+
+> ⚠️ 前提：这个文件应当**由你来编辑**。如果它是别的程序或别人持续写入的日志，
+> 整文件保存会把对方这期间追加的内容抹掉。那种场景请只在只读模式下看，或提出「仅追加」需求。
+
+### 时间线里的标记
+
+- `+3行` —— 远端追加了 3 行
+- `内容变化` —— 远端内容被改写
+- `✎ 本机保存 12行` —— 由你在这台机器上编辑保存产生的
 
 ## 三个新功能怎么用
 
@@ -184,6 +236,7 @@ RemoteTxtViewer\   （本项目根目录）
 │   ├─ ChangeLog.cs        变更历史（24 小时滚动 + 容量上限）
 │   ├─ FavoritesStore.cs   收藏夹存储
 │   ├─ FavoritesForm.cs    收藏夹窗口
+│   ├─ ConflictForm.cs     保存冲突对比对话框
 │   ├─ PromptForm.cs       命名输入框
 │   ├─ SettingsForm.cs     连接设置（含「重置主机指纹」）
 │   ├─ RemotePickerForm.cs 远程文件浏览
@@ -202,6 +255,11 @@ RemoteTxtViewer\   （本项目根目录）
 csc /out:tools\test_datastore.exe /r:System.dll /r:System.Core.dll /r:System.Security.dll ^
     src\AppConfig.cs src\ChangeLog.cs src\FavoritesStore.cs tools\test_datastore.cs
 tools\test_datastore.exe
+
+:: 写入层：编码保留 / 原子性 / 无残留（16 项）
+csc /out:tools\test_write.exe /r:System.dll /r:System.Core.dll /r:System.Security.dll ^
+    /r:tools\Renci.SshNet.dll src\AppConfig.cs src\SftpFetcher.cs tools\test_write.cs
+tools\test_write.exe
 
 :: 主机指纹拦截（11 项，需先起 tools\sftp_test_server.py）
 csc /out:tools\test_hostkey.exe /r:System.dll /r:System.Core.dll /r:System.Security.dll ^

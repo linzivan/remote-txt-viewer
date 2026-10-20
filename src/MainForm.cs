@@ -27,6 +27,14 @@ namespace RemoteTxtViewer
         private string _pinnedLabel = "";    // 正在看收藏时显示的名字
         private bool _suppressPaneSelect;
 
+        // ---- 编辑模式 ----
+        private bool _editing;
+        private bool _suppressEditToggle;
+        private string _editBaselineText = "";   // 进入编辑时的内容（判断是否有改动）
+        private string _editBaselineHash = "";   // 进入编辑时的内容指纹（判断远端是否被改）
+        private bool _remoteChangedDuringEdit;
+        private string _pendingRemoteText = null;
+
         private float _scale = 1f;
         private Font _uiFont;
         private Font _contentFont;
@@ -43,6 +51,8 @@ namespace RemoteTxtViewer
         private ToolStripButton _chkPane;
         private ToolStripButton _btnFav;
         private ToolStripButton _btnFavList;
+        private ToolStripButton _btnEdit;
+        private ToolStripButton _btnSave;
         private ToolStripButton _btnFontMinus;
         private ToolStripButton _btnFontPlus;
         private ToolStripComboBox _cmbInterval;
@@ -209,6 +219,14 @@ namespace RemoteTxtViewer
             _cmbInterval.Width = S(74);
             _cmbInterval.SelectedIndexChanged += delegate { OnIntervalChanged(); };
 
+            _btnEdit = MakeButton("编辑", "切换编辑模式：可直接修改内容并保存回服务器 (Ctrl+E)");
+            _btnEdit.CheckOnClick = true;
+            _btnEdit.CheckedChanged += delegate { OnEditToggle(); };
+
+            _btnSave = MakeButton("保存", "保存到服务器 (Ctrl+S)");
+            _btnSave.Enabled = false;
+            _btnSave.Click += delegate { SaveEdit(); };
+
             _chkFollow = MakeButton("跟随末尾", "有新内容时自动滚到最新一行");
             _chkFollow.CheckOnClick = true;
             _chkFollow.Checked = true;
@@ -253,6 +271,8 @@ namespace RemoteTxtViewer
                 _btnSettings,
                 new ToolStripSeparator(),
                 _btnRefresh,
+                _btnEdit,
+                _btnSave,
                 new ToolStripSeparator(),
                 _chkAuto,
                 _cmbInterval,
@@ -535,8 +555,18 @@ namespace RemoteTxtViewer
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (keyData == Keys.F5) { ScheduleRefresh(true); return true; }
-            if (keyData == Keys.Escape) { if (_viewing != null || _pinnedLabel.Length > 0) { ReturnToLive(); return true; } }
+            if (keyData == Keys.Escape)
+            {
+                if (_editing) { _btnEdit.Checked = false; return true; }
+                if (_viewing != null || _pinnedLabel.Length > 0) { ReturnToLive(); return true; }
+            }
             if (keyData == (Keys.Control | Keys.O)) { OpenSettingsAndReload(); return true; }
+            if (keyData == (Keys.Control | Keys.S)) { SaveEdit(); return true; }
+            if (keyData == (Keys.Control | Keys.E))
+            {
+                _btnEdit.Checked = !_btnEdit.Checked;
+                return true;
+            }
             if (keyData == (Keys.Control | Keys.D)) { AddFavorite(); return true; }
             if (keyData == (Keys.Control | Keys.B)) { OpenFavorites(); return true; }
             if (keyData == (Keys.Control | Keys.H))
@@ -677,7 +707,8 @@ namespace RemoteTxtViewer
             else when = e.LocalTime.ToString("MM-dd HH:mm");
 
             string what;
-            if (e.IsBaseline) what = "初始 " + e.TotalLines.ToString() + "行";
+            if (e.IsLocalEdit) what = "✎ 本机保存 " + e.TotalLines.ToString() + "行";
+            else if (e.IsBaseline) what = "初始 " + e.TotalLines.ToString() + "行";
             else if (e.NewLines > 0) what = "+" + e.NewLines.ToString() + "行";
             else what = "内容变化";
 
@@ -817,10 +848,239 @@ namespace RemoteTxtViewer
             }
         }
 
+        // ================= 编辑模式 =================
+
+        private void OnEditToggle()
+        {
+            if (_suppressEditToggle) return;
+            if (_btnEdit.Checked) EnterEditMode();
+            else ExitEditMode(false);
+        }
+
+        private void EnterEditMode()
+        {
+            if (!_cfg.IsReady) { WarnNoEdit("还没有配置连接"); return; }
+            if (_viewing != null || _pinnedLabel.Length > 0) ReturnToLive();
+
+            if (_lastText.Length == 0)
+            {
+                WarnNoEdit("等首次读取完成后再编辑");
+                return;
+            }
+
+            _editing = true;
+            _editBaselineText = _lastText;
+            _editBaselineHash = SftpFetcher.HashText(_lastText);
+            _remoteChangedDuringEdit = false;
+            _pendingRemoteText = null;
+
+            _btnSave.Enabled = true;
+            _rtb.ReadOnly = false;
+            _rtb.BackColor = Color.FromArgb(255, 253, 244);
+            _rtb.Focus();
+            _rtb.SelectionStart = _rtb.TextLength;
+
+            SetStatus("✎ 编辑中 · 未保存", Color.FromArgb(176, 100, 20));
+            _lblNew.ForeColor = Color.FromArgb(150, 120, 40);
+            _lblNew.Text = "Ctrl+S 保存    Esc 取消";
+        }
+
+        private void WarnNoEdit(string msg)
+        {
+            _suppressEditToggle = true;
+            _btnEdit.Checked = false;
+            _suppressEditToggle = false;
+            SetStatus("● " + msg, Color.FromArgb(150, 150, 155));
+        }
+
+        private void ExitEditMode(bool afterSave)
+        {
+            if (!_editing) return;
+
+            if (!afterSave && _rtb.Text != _editBaselineText)
+            {
+                if (MessageBox.Show(this, "有未保存的修改，确定放弃吗？",
+                        "放弃修改", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                {
+                    _suppressEditToggle = true;
+                    _btnEdit.Checked = true;
+                    _suppressEditToggle = false;
+                    return;
+                }
+            }
+
+            _editing = false;
+            _remoteChangedDuringEdit = false;
+            _pendingRemoteText = null;
+
+            _suppressEditToggle = true;
+            _btnEdit.Checked = false;
+            _suppressEditToggle = false;
+
+            _btnSave.Enabled = false;
+            _rtb.ReadOnly = true;
+            _rtb.BackColor = Color.White;
+            _rtb.Text = _lastText;
+            ScrollToBottom();
+
+            SetStatus("● 已连接", Color.FromArgb(22, 130, 62));
+            _lblNew.ForeColor = Color.FromArgb(190, 108, 0);
+            _lblNew.Text = "";          // 清掉"编辑中/远端已更新"之类的过时提示
+            if (_lastSnap != null)
+            {
+                _lblChanged.Text = "更改 " + FormatMtime(_lastSnap.ModifiedUtc);
+                UpdateSizeLabel(_lastText, _lastSnap.Size);
+            }
+        }
+
+        private void SaveEdit()
+        {
+            if (!_editing) return;
+
+            string myText = _rtb.Text;
+            if (myText == _editBaselineText)
+            {
+                SetStatus("✎ 没有改动，无需保存", Color.FromArgb(120, 124, 130));
+                return;
+            }
+            DoSave(myText, false);
+        }
+
+        /// <summary>force=true 表示跳过冲突检查（用户在冲突对话框里选了"用我的覆盖"）。</summary>
+        private void DoSave(string text, bool force)
+        {
+            SetStatus("✎ 正在保存…", Color.FromArgb(176, 122, 20));
+
+            AppConfig cfg = _cfg;
+            bool forceFlag = force;
+            string baselineHash = _editBaselineHash;
+
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                string err = null;
+                bool conflict = false;
+                string remoteText = null;
+                string remoteEnc = null;
+                long newSize = 0;
+                DateTime newMtime = DateTime.MinValue;
+
+                lock (_netLock)
+                {
+                    try
+                    {
+                        if (_fetcher == null) _fetcher = new SftpFetcher(cfg);
+
+                        Snapshot cur = _fetcher.Read();
+                        remoteText = cur.Text;
+                        remoteEnc = cur.EncodingName;
+
+                        if (!forceFlag && SftpFetcher.HashText(cur.Text) != baselineHash)
+                        {
+                            conflict = true;
+                        }
+                        else
+                        {
+                            _fetcher.WriteAtomic(text, cur.EncodingName);
+                            RemoteStat st = _fetcher.Stat();
+                            newSize = st.Size;
+                            newMtime = st.ModifiedUtc;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        err = SftpFetcher.DescribeError(ex);
+                        if (_fetcher != null) { try { _fetcher.Dispose(); } catch { } _fetcher = null; }
+                    }
+                }
+
+                try
+                {
+                    BeginInvoke(new Action(delegate
+                    {
+                        OnSaveDone(text, err, conflict, remoteText, remoteEnc, newSize, newMtime);
+                    }));
+                }
+                catch { }
+            });
+        }
+
+        private void OnSaveDone(string savedText, string err, bool conflict,
+                                string remoteText, string remoteEnc, long newSize, DateTime newMtime)
+        {
+            if (_closing) return;
+
+            if (err != null)
+            {
+                SetStatus("✎ 保存失败", Color.FromArgb(198, 40, 40));
+                _lblStatus.ToolTipText = err;
+                MessageBox.Show(this, "保存失败：\r\n\r\n" + err, "保存失败",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            if (conflict)
+            {
+                HandleConflict(remoteText, savedText, remoteEnc);
+                return;
+            }
+
+            // ---- 保存成功 ----
+            _lastText = savedText;
+
+            RemoteStat ns = new RemoteStat();
+            ns.Size = newSize;
+            ns.ModifiedUtc = newMtime;
+            _lastStat = ns;
+
+            Snapshot fake = new Snapshot();
+            fake.Text = savedText;
+            fake.Size = newSize;
+            fake.ModifiedUtc = newMtime;
+            fake.EncodingName = remoteEnc;
+            _lastSnap = fake;
+
+            _changeLog.Add(savedText, newMtime, -1, CountLines(savedText), false, true);
+            RefreshTimeline();
+
+            ExitEditMode(true);
+
+            SetStatus("✔ 已保存到服务器", Color.FromArgb(22, 130, 62));
+            _lblNew.ForeColor = Color.FromArgb(40, 140, 70);
+            _lblNew.Text = "✔ 已保存 " + DateTime.Now.ToString("HH:mm:ss");
+        }
+
+        private void HandleConflict(string remoteText, string myText, string remoteEnc)
+        {
+            using (ConflictForm dlg = new ConflictForm(remoteText, myText, "", _scale))
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK)
+                {
+                    SetStatus("✎ 编辑中 · 未保存（远端已改动）", Color.FromArgb(198, 40, 40));
+                    return;
+                }
+
+                if (dlg.Choice == ConflictChoice.Overwrite)
+                {
+                    DoSave(myText, true);
+                }
+                else if (dlg.Choice == ConflictChoice.UseRemote)
+                {
+                    _lastText = remoteText;
+                    ExitEditMode(true);
+                    SetStatus("✔ 已载入服务器版本", Color.FromArgb(22, 130, 62));
+                }
+                else if (dlg.Choice == ConflictChoice.SaveLocal)
+                {
+                    SetStatus("✎ 已另存到本地 · 仍在编辑", Color.FromArgb(176, 100, 20));
+                }
+            }
+        }
+
         // ================= 刷新核心 =================
 
         private void ResetConnection()
         {
+            if (_editing) ExitEditMode(true);
             if (_viewing != null || _pinnedLabel.Length > 0) ReturnToLive();
 
             _lastStat = null;
@@ -929,7 +1189,8 @@ namespace RemoteTxtViewer
                 _cfg.Save();
             }
 
-            if (_viewing == null && _pinnedLabel.Length == 0)
+            // 编辑中不要用"已连接"覆盖"编辑中"的状态提示
+            if (_viewing == null && _pinnedLabel.Length == 0 && !_editing)
             {
                 SetStatus("● 已连接", Color.FromArgb(22, 130, 62));
                 _lblStatus.ToolTipText = "";
@@ -967,6 +1228,31 @@ namespace RemoteTxtViewer
             bool baseline = (oldText.Length == 0);
 
             bool atBottom = _chkFollow.Checked || IsLastLineVisible();
+
+            if (_editing)
+            {
+                // 编辑中：绝不覆盖正在输入的正文，只更新后台状态
+                if (!same)
+                {
+                    _lastText = newText;
+                    _lastSnap = snap;
+                    _pendingRemoteText = newText;
+
+                    UpdateSizeLabel(newText, snap.Size);
+                    _lblChanged.Text = "更改 " + FormatMtime(snap.ModifiedUtc);
+                    if (!_remoteChangedDuringEdit)
+                    {
+                        _remoteChangedDuringEdit = true;
+                        _lblNew.ForeColor = Color.FromArgb(198, 40, 40);
+                        _lblNew.Text = "⚠ 远端已更新（保存时会提示冲突）";
+                    }
+
+                    int dl = baseline ? -1 : (pureAppend ? (lines - oldLines) : -1);
+                    _changeLog.Add(newText, snap.ModifiedUtc, dl, lines, baseline, false);
+                    RefreshTimeline();
+                }
+                return;
+            }
 
             if (!same)
             {

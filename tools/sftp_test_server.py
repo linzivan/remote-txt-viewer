@@ -68,7 +68,11 @@ class MySFTPServer(paramiko.SFTPServerInterface):
         real = self._real(path)
         try:
             if flags & os.O_WRONLY:
-                mode = "r+b" if os.path.exists(real) else "wb"
+                # O_TRUNC 必须映射成 "wb"（覆盖写），否则残留旧内容尾部
+                if flags & os.O_TRUNC:
+                    mode = "wb"
+                else:
+                    mode = "r+b" if os.path.exists(real) else "wb"
             elif flags & os.O_RDWR:
                 mode = "r+b" if os.path.exists(real) else "wb"
             elif flags & os.O_APPEND:
@@ -85,6 +89,39 @@ class MySFTPServer(paramiko.SFTPServerInterface):
         if flags & (os.O_WRONLY | os.O_RDWR | os.O_APPEND):
             h.writefile = f
         return h
+
+    def remove(self, path):
+        real = self._real(path)
+        try:
+            os.remove(real)
+            return paramiko.SFTP_OK
+        except OSError as e:
+            return paramiko.SFTPServer.convert_errno(e.errno)
+
+    def rename(self, oldpath, newpath):
+        old = self._real(oldpath)
+        new = self._real(newpath)
+        try:
+            os.replace(old, new)
+            return paramiko.SFTP_OK
+        except OSError as e:
+            return paramiko.SFTPServer.convert_errno(e.errno)
+
+    def mkdir(self, path, attr):
+        real = self._real(path)
+        try:
+            os.mkdir(real)
+            return paramiko.SFTP_OK
+        except OSError as e:
+            return paramiko.SFTPServer.convert_errno(e.errno)
+
+    def rmdir(self, path):
+        real = self._real(path)
+        try:
+            os.rmdir(real)
+            return paramiko.SFTP_OK
+        except OSError as e:
+            return paramiko.SFTPServer.convert_errno(e.errno)
 
     def canonicalize(self, path):
         if not path.startswith("/"):

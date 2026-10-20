@@ -14,6 +14,7 @@ namespace RemoteTxtViewer
         public int TotalLines;
         public long Bytes;
         public bool IsBaseline;
+        public bool IsLocalEdit;       // 由本机编辑保存产生（区别于远端变化）
         public string Text;            // 可能为 null，需要时从磁盘加载
     }
 
@@ -61,6 +62,12 @@ namespace RemoteTxtViewer
 
         public ChangeEntry Add(string text, DateTime serverMtime, int newLines, int totalLines, bool baseline)
         {
+            return Add(text, serverMtime, newLines, totalLines, baseline, false);
+        }
+
+        public ChangeEntry Add(string text, DateTime serverMtime, int newLines, int totalLines,
+                               bool baseline, bool localEdit)
+        {
             if (text == null) text = "";
             lock (_sync)
             {
@@ -76,6 +83,7 @@ namespace RemoteTxtViewer
                 e.TotalLines = totalLines;
                 e.Bytes = Encoding.UTF8.GetByteCount(text);
                 e.IsBaseline = baseline;
+                e.IsLocalEdit = localEdit;
                 e.Text = text;
 
                 try { File.WriteAllText(PathFor(id), text, new UTF8Encoding(false)); }
@@ -160,7 +168,8 @@ namespace RemoteTxtViewer
                       .Append(e.NewLines).Append('\t')
                       .Append(e.TotalLines).Append('\t')
                       .Append(e.Bytes).Append('\t')
-                      .Append(e.IsBaseline ? "1" : "0").Append('\n');
+                      .Append(e.IsBaseline ? "1" : "0").Append('\t')
+                      .Append(e.IsLocalEdit ? "1" : "0").Append('\n');
                 }
                 File.WriteAllText(_indexPath, sb.ToString(), new UTF8Encoding(false));
             }
@@ -203,6 +212,7 @@ namespace RemoteTxtViewer
                         long b;
                         e.Bytes = long.TryParse(f[5], out b) ? b : 0;
                         e.IsBaseline = (f[6] == "1");
+                        e.IsLocalEdit = (f.Length >= 8 && f[7] == "1");
                         e.Text = null;
 
                         _entries.Add(e);

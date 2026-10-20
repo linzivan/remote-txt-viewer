@@ -29,7 +29,7 @@ echo Compiling ...
   /resource:%SSHNET%,Renci.SshNet.dll ^
   src\AppConfig.cs src\SftpFetcher.cs src\ChangeLog.cs src\FavoritesStore.cs ^
   src\PromptForm.cs src\Program.cs src\MainForm.cs src\SettingsForm.cs ^
-  src\RemotePickerForm.cs src\FavoritesForm.cs
+  src\RemotePickerForm.cs src\FavoritesForm.cs src\ConflictForm.cs
 
 if errorlevel 1 (
   echo [FAILED]

@@ -224,6 +224,120 @@ namespace RemoteTxtViewer
             return list;
         }
 
+        // ---------------- 写入 ----------------
+
+        /// <summary>根据 Decode() 报出的编码名返回对应 Encoding（保留 BOM 行为，避免写回后中文变乱码）。</summary>
+        public static Encoding EncodingFor(string encodingName)
+        {
+            if (encodingName == "UTF-8 BOM") return new UTF8Encoding(true);
+            if (encodingName == "UTF-16 LE") return new UnicodeEncoding(false, true);
+            if (encodingName == "UTF-16 BE") return new UnicodeEncoding(true, true);
+            if (encodingName == "GBK") return Encoding.GetEncoding(936);
+            return new UTF8Encoding(false);
+        }
+
+        /// <summary>内容指纹，用于冲突检测（只比文本内容，不受编码/换行差异干扰）。</summary>
+        public static string HashText(string text)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] h = sha.ComputeHash(Encoding.UTF8.GetBytes(text == null ? "" : text));
+                StringBuilder sb = new StringBuilder(h.Length * 2);
+                for (int i = 0; i < h.Length; i++) sb.Append(h[i].ToString("x2"));
+                return sb.ToString();
+            }
+        }
+
+        private static string PosixDir(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "/";
+            int i = path.LastIndexOf('/');
+            if (i < 0) return ".";
+            if (i == 0) return "/";
+            return path.Substring(0, i);
+        }
+
+        private static string PosixName(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            int i = path.LastIndexOf('/');
+            return i < 0 ? path : path.Substring(i + 1);
+        }
+
+        private static string PosixJoin(string dir, string name)
+        {
+            if (string.IsNullOrEmpty(dir)) return name;
+            if (dir.EndsWith("/")) return dir + name;
+            return dir + "/" + name;
+        }
+
+        /// <summary>
+        /// 原子写入：先上传临时文件 → 原文件改名备份 → 临时文件改名成目标 → 删备份。
+        /// 任何一步失败都回滚，服务器上任何时刻都存在一份完整文件（不会写出半个文件）。
+        /// </summary>
+        public void WriteAtomic(string text, string encodingName)
+        {
+            EnsureConnected();
+
+            string target = _cfg.RemotePath;
+            string dir = PosixDir(target);
+            string name = PosixName(target);
+            string stamp = DateTime.Now.Ticks.ToString();
+
+            string tmp = PosixJoin(dir, "." + name + ".rtv-tmp-" + stamp);
+            string bak = PosixJoin(dir, "." + name + ".rtv-bak-" + stamp);
+
+            Encoding enc = EncodingFor(encodingName);
+            byte[] data = enc.GetBytes(text == null ? "" : text);
+
+            // GetBytes() 不会写 BOM，必须手动把 preamble 放回最前面，
+            // 否则原来是 UTF-8 BOM / UTF-16 的文件写回后会变成无 BOM，再次读会解析错。
+            byte[] pre = enc.GetPreamble();
+            if (pre != null && pre.Length > 0)
+            {
+                byte[] merged = new byte[pre.Length + data.Length];
+                Buffer.BlockCopy(pre, 0, merged, 0, pre.Length);
+                Buffer.BlockCopy(data, 0, merged, pre.Length, data.Length);
+                data = merged;
+            }
+
+            using (MemoryStream ms = new MemoryStream(data))
+            {
+                _client.UploadFile(ms, tmp, true);
+            }
+
+            bool backedUp = false;
+            try
+            {
+                if (_client.Exists(target))
+                {
+                    _client.RenameFile(target, bak);
+                    backedUp = true;
+                }
+                _client.RenameFile(tmp, target);
+            }
+            catch (Exception)
+            {
+                if (backedUp)
+                {
+                    try { _client.RenameFile(bak, target); } catch { }
+                }
+                try { _client.DeleteFile(tmp); } catch { }
+                throw;
+            }
+
+            if (backedUp)
+            {
+                try { _client.DeleteFile(bak); } catch { }
+            }
+        }
+
+        /// <summary>只取大小，用于保存后校验。</summary>
+        public long SizeOf()
+        {
+            return Stat().Size;
+        }
+
         // ---------------- 编码 ----------------
 
         public static string Decode(byte[] data, string pref, out string usedName)

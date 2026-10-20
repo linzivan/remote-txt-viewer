@@ -20,6 +20,8 @@ internal static class UiProbe
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessageStr(IntPtr hWnd, uint msg, IntPtr wParam, string lParam);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
@@ -70,6 +72,44 @@ internal static class UiProbe
                 int len = SendMessage(lb, 0x018A, (IntPtr)i, IntPtr.Zero).ToInt32();   // LB_GETTEXTLEN
                 Console.WriteLine("  [" + i + "] len=" + len);
             }
+            return 0;
+        }
+
+        if (cmd == "dumpdlg")
+        {
+            string title = args.Length > 2 ? args[2] : "";
+            IntPtr dlg = FindWindowByTitle((uint)p.Id, title);
+            if (dlg == IntPtr.Zero) { Console.WriteLine("NO_DIALOG " + title); return 7; }
+            Console.WriteLine("--- children of |" + title + "| ---");
+            EnumChildWindows(dlg, delegate(IntPtr hw, IntPtr l)
+            {
+                StringBuilder cn = new StringBuilder(128);
+                GetClassName(hw, cn, 128);
+                StringBuilder tx = new StringBuilder(256);
+                GetWindowText(hw, tx, 256);
+                Console.WriteLine("  " + cn.ToString().PadRight(42) + " |" + tx.ToString() + "|");
+                return true;
+            }, IntPtr.Zero);
+            return 0;
+        }
+
+        if (cmd == "setedit")
+        {
+            string text = args.Length > 2 ? args[2] : "";
+            IntPtr rtb = FindChildByClass(hWnd, "RichEdit");
+            if (rtb == IntPtr.Zero) { Console.WriteLine("NO_EDIT_CONTROL"); return 10; }
+            SendMessageStr(rtb, 0x000C, IntPtr.Zero, text);   // WM_SETTEXT
+            System.Threading.Thread.Sleep(400);
+            Console.WriteLine("editor text set, chars=" + text.Length);
+            return 0;
+        }
+
+        if (cmd == "getedit")
+        {
+            IntPtr rtb = FindChildByClass(hWnd, "RichEdit");
+            if (rtb == IntPtr.Zero) { Console.WriteLine("NO_EDIT_CONTROL"); return 10; }
+            int len = (int)SendMessage(rtb, 0x000E, IntPtr.Zero, IntPtr.Zero);   // WM_GETTEXTLENGTH
+            Console.WriteLine("editor chars=" + len);
             return 0;
         }
 
@@ -286,6 +326,20 @@ internal static class UiProbe
             return true;
         }, IntPtr.Zero);
 
+        return found;
+    }
+
+    private static IntPtr FindChildByClass(IntPtr parent, string className)
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumChildWindows(parent, delegate(IntPtr hw, IntPtr l)
+        {
+            if (found != IntPtr.Zero) return true;
+            StringBuilder cn = new StringBuilder(128);
+            GetClassName(hw, cn, 128);
+            if (cn.ToString().IndexOf(className, StringComparison.OrdinalIgnoreCase) >= 0) found = hw;
+            return true;
+        }, IntPtr.Zero);
         return found;
     }
 
