@@ -1,0 +1,20 @@
+# ---------- 编译产物 ----------
+*.pdb
+obj/
+bin/
+tools/*.exe
+
+# ---------- 第三方库 ----------
+# 编译只需要 lib/Renci.SshNet.dll（已单独存放），解包出来的其它目标框架不入库
+lib/pkg/
+
+# ---------- 测试与临时文件 ----------
+testroot/
+probe/
+*.log
+shot*.png
+icons/exe_icon_check.png
+
+# ---------- Python ----------
+__pycache__/
+*.pyc
