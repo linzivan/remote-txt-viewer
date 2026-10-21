@@ -1242,14 +1242,16 @@ namespace RemoteTxtViewer
                 return;
             }
 
-            if (!same)
+            // 正文重绘必须和"内容有没有变"解耦：
+            // 启动时若文件内容与历史最后一条相同，same 会为 true，
+            // 若把赋值锁在 !same 里，窗口打开就是空白（必须点一下时间线才出来）。
+            bool needPaint = firstLoad || !same;
+
+            if (needPaint && s.ViewingEntry == null && s.PinnedLabel.Length == 0)
             {
-                if (s.ViewingEntry == null && s.PinnedLabel.Length == 0)
-                {
-                    _rtb.Text = newText;
-                    if (pureAppend && !firstLoad) HighlightFromLine(oldLines);
-                    if (atBottom) ScrollToBottom();
-                }
+                _rtb.Text = newText;
+                if (pureAppend && !firstLoad) HighlightFromLine(oldLines);
+                if (atBottom) ScrollToBottom();
             }
 
             s.LastText = newText;
