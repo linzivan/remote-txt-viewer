@@ -109,6 +109,58 @@ internal static class UiProbe
             return 0;
         }
 
+        if (cmd == "setdlgtext")
+        {
+            string title = args.Length > 2 ? args[2] : "";
+            int index = args.Length > 3 ? int.Parse(args[3]) : 0;
+            string text = args.Length > 4 ? args[4] : "";
+
+            IntPtr dlg = FindWindowByTitle((uint)p.Id, title);
+            if (dlg == IntPtr.Zero) { Console.WriteLine("NO_DIALOG " + title); return 7; }
+
+            // 收集对话框里的 EDIT 控件
+            System.Collections.Generic.List<IntPtr> edits = new System.Collections.Generic.List<IntPtr>();
+            EnumChildWindows(dlg, delegate(IntPtr hw, IntPtr l)
+            {
+                StringBuilder cn = new StringBuilder(128);
+                GetClassName(hw, cn, 128);
+                if (cn.ToString().IndexOf("EDIT", StringComparison.OrdinalIgnoreCase) >= 0) edits.Add(hw);
+                return true;
+            }, IntPtr.Zero);
+
+            if (index < 0 || index >= edits.Count)
+            {
+                Console.WriteLine("BAD_INDEX edits=" + edits.Count);
+                return 8;
+            }
+
+            SendMessageStr(edits[index], 0x000C, IntPtr.Zero, text);   // WM_SETTEXT
+            System.Threading.Thread.Sleep(200);
+            Console.WriteLine("set edit[" + index + "/" + edits.Count + "] = " + text);
+            return 0;
+        }
+
+        if (cmd == "clicktab")
+        {
+            int tx = args.Length > 2 ? int.Parse(args[2]) : 100;
+            int ty = args.Length > 3 ? int.Parse(args[3]) : 12;
+
+            IntPtr tab = FindChildByClass(hWnd, "SysTabControl32");
+            if (tab == IntPtr.Zero) { Console.WriteLine("NO_TABCONTROL"); return 11; }
+
+            int cnt = SendMessage(tab, 0x1304, IntPtr.Zero, IntPtr.Zero).ToInt32();  // TCM_GETITEMCOUNT
+            Console.WriteLine("tabcontrol items=" + cnt);
+
+            IntPtr lp = (IntPtr)((ty << 16) | (tx & 0xFFFF));
+            SendMessage(tab, 0x0201, (IntPtr)1, lp);        // WM_LBUTTONDOWN
+            SendMessage(tab, 0x0202, IntPtr.Zero, lp);      // WM_LBUTTONUP
+            System.Threading.Thread.Sleep(1200);
+
+            int sel = SendMessage(tab, 0x130B, IntPtr.Zero, IntPtr.Zero).ToInt32();  // TCM_GETCURSEL
+            Console.WriteLine("clicked tab at " + tx + "," + ty + " -> curSel=" + sel);
+            return 0;
+        }
+
         if (cmd == "setedit")
         {
             string text = args.Length > 2 ? args[2] : "";

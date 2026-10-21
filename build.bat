@@ -27,7 +27,8 @@ echo Compiling ...
   /r:System.Security.dll ^
   /r:%SSHNET% ^
   /resource:%SSHNET%,Renci.SshNet.dll ^
-  src\AppConfig.cs src\SftpFetcher.cs src\ChangeLog.cs src\FavoritesStore.cs ^
+  src\AppConfig.cs src\SftpFetcher.cs src\ChangeLog.cs src\FavoritesStore.cs ^
+  src\MonitorSession.cs src\SessionStore.cs ^
   src\PromptForm.cs src\Program.cs src\MainForm.cs src\SettingsForm.cs ^
   src\RemotePickerForm.cs src\FavoritesForm.cs src\ConflictForm.cs
 

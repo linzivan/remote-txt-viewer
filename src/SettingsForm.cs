@@ -22,10 +22,13 @@ namespace RemoteTxtViewer
 
         private static readonly int[] Intervals = new int[] { 1, 2, 3, 5, 10, 30, 60 };
 
-        public SettingsForm(AppConfig cfg, float scale)
+        private readonly bool _isNew;
+
+        public SettingsForm(AppConfig cfg, float scale, bool isNew)
         {
             _cfg = cfg;
             _scale = scale;
+            _isNew = isNew;
             Build();
         }
 
@@ -109,7 +112,7 @@ namespace RemoteTxtViewer
 
             AutoScaleMode = AutoScaleMode.None;
             Font = _uiFont;
-            Text = "连接设置";
+            Text = _isNew ? "新建监控项" : "连接设置";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -288,7 +291,7 @@ namespace RemoteTxtViewer
 
             _btnCancel = MakeButton("取消", rightEdge - cancelW, by, cancelW, btnH,
                 delegate { DialogResult = DialogResult.Cancel; Close(); });
-            _btnOk = MakeButton("保存", rightEdge - cancelW - okW - S(8), by, okW, btnH,
+            _btnOk = MakeButton(_isNew ? "创建" : "保存", rightEdge - cancelW - okW - S(8), by, okW, btnH,
                 delegate { Save(); });
             _btnTest = MakeButton("测试连接",
                 rightEdge - cancelW - okW - testW - S(24), by, testW, btnH,

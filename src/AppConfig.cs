@@ -77,7 +77,7 @@ namespace RemoteTxtViewer
 
         // ---------------- DPAPI ----------------
 
-        private static string Protect(string plain)
+        public static string ProtectSecret(string plain)
         {
             if (string.IsNullOrEmpty(plain)) return "";
             try
@@ -89,7 +89,7 @@ namespace RemoteTxtViewer
             catch { return ""; }
         }
 
-        private static string Unprotect(string cipher)
+        public static string UnprotectSecret(string cipher)
         {
             if (string.IsNullOrEmpty(cipher)) return "";
             try
@@ -124,10 +124,10 @@ namespace RemoteTxtViewer
                         case "host": c.Host = v.Trim(); break;
                         case "port": c.Port = ParseInt(v, 22); break;
                         case "user": c.User = v.Trim(); break;
-                        case "password": c.Password = Unprotect(v.Trim()); break;
+                        case "password": c.Password = UnprotectSecret(v.Trim()); break;
                         case "use_key": c.UseKey = (v.Trim() == "1"); break;
                         case "key_file": c.KeyFile = v.Trim(); break;
-                        case "key_pass": c.KeyPass = Unprotect(v.Trim()); break;
+                        case "key_pass": c.KeyPass = UnprotectSecret(v.Trim()); break;
                         case "remote_path": c.RemotePath = v.Trim(); break;
                         case "interval": c.IntervalSec = ParseInt(v, 3); break;
                         case "encoding": c.EncodingPref = v.Trim(); break;
@@ -163,10 +163,10 @@ namespace RemoteTxtViewer
                 sb.AppendLine("host=" + Host);
                 sb.AppendLine("port=" + Port.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("user=" + User);
-                sb.AppendLine("password=" + Protect(Password));
+                sb.AppendLine("password=" + ProtectSecret(Password));
                 sb.AppendLine("use_key=" + (UseKey ? "1" : "0"));
                 sb.AppendLine("key_file=" + KeyFile);
-                sb.AppendLine("key_pass=" + Protect(KeyPass));
+                sb.AppendLine("key_pass=" + ProtectSecret(KeyPass));
                 sb.AppendLine("remote_path=" + RemotePath);
                 sb.AppendLine("interval=" + IntervalSec.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("encoding=" + EncodingPref);

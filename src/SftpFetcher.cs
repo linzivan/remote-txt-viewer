@@ -447,6 +447,17 @@ namespace RemoteTxtViewer
             return ex.GetType().Name + "：" + ex.Message;
         }
 
+        /// <summary>判断异常是否表示"远程路径不存在"（用于自动询问是否创建文件）。</summary>
+        public static bool IsNotFound(Exception ex)
+        {
+            if (ex == null) return false;
+            if (ex is SftpPathNotFoundException) return true;
+
+            Exception root = ex;
+            while (root.InnerException != null) root = root.InnerException;
+            return root is SftpPathNotFoundException;
+        }
+
         private static string Short(string fp)
         {
             if (string.IsNullOrEmpty(fp)) return "(空)";
