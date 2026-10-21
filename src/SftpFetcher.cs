@@ -28,6 +28,7 @@ namespace RemoteTxtViewer
         public string Name = "";
         public bool IsDir;
         public long Size;
+        public DateTime ModifiedUtc = DateTime.MinValue;
     }
 
     /// <summary>服务器主机密钥指纹与首次记录的不一致 —— 可能是中间人，也可能是服务器重装过系统。</summary>
@@ -214,6 +215,7 @@ namespace RemoteTxtViewer
                 e.Name = f.Name;
                 e.IsDir = f.IsDirectory;
                 e.Size = f.Length;
+                try { e.ModifiedUtc = f.LastWriteTimeUtc; } catch { e.ModifiedUtc = DateTime.MinValue; }
                 list.Add(e);
             }
             list.Sort(delegate(DirEntry a, DirEntry b)

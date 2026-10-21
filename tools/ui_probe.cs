@@ -221,26 +221,65 @@ internal static class UiProbe
 
         if (cmd == "uia")
         {
-            // 通过 UI Automation 直接 Invoke 工具栏按钮：不移动鼠标、不抢焦点
+            // 通过 UI Automation 操作元素：不移动鼠标、不抢焦点
+            // 用法: uia <shot> <元素名> [窗口标题]   有窗口标题时在该子窗口里找
             string want = args.Length > 2 ? args[2] : "";
-            AutomationElement rootEl = AutomationElement.FromHandle(hWnd);
+            string winTitle = args.Length > 3 ? args[3] : "";
+
+            IntPtr rootHwnd = hWnd;
+            if (!string.IsNullOrEmpty(winTitle))
+            {
+                IntPtr dlg = FindWindowByTitle((uint)p.Id, winTitle);
+                if (dlg != IntPtr.Zero) rootHwnd = dlg;
+                else Console.WriteLine("WARN window not found, fallback to main");
+            }
+
+            AutomationElement rootEl = AutomationElement.FromHandle(rootHwnd);
             if (rootEl == null) { Console.WriteLine("NO_UIA_ROOT"); return 11; }
 
+            // 可选第 5 个参数限定控件类型（同名元素在树和列表里都存在时必须限定）
+            string wantType = args.Length > 4 ? args[4] : "";
             Condition cond = new PropertyCondition(AutomationElement.NameProperty, want);
+            if (wantType.Length > 0)
+            {
+                ControlType ct = null;
+                if (wantType == "TreeItem") ct = ControlType.TreeItem;
+                else if (wantType == "ListItem") ct = ControlType.ListItem;
+                else if (wantType == "Button") ct = ControlType.Button;
+                else if (wantType == "DataItem") ct = ControlType.DataItem;
+                if (ct != null)
+                    cond = new AndCondition(cond,
+                        new PropertyCondition(AutomationElement.ControlTypeProperty, ct));
+            }
+
             AutomationElement el = rootEl.FindFirst(TreeScope.Descendants, cond);
             if (el == null) { Console.WriteLine("NO_UIA_ELEMENT |" + want + "|"); return 12; }
 
             object pat;
-            if (!el.TryGetCurrentPattern(InvokePattern.Pattern, out pat))
+            if (el.TryGetCurrentPattern(InvokePattern.Pattern, out pat))
             {
-                Console.WriteLine("NO_INVOKE_PATTERN |" + want + "|");
-                return 13;
+                ((InvokePattern)pat).Invoke();
+                System.Threading.Thread.Sleep(900);
+                Console.WriteLine("invoked |" + want + "|");
+                return 0;
+            }
+            if (el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pat))
+            {
+                ((SelectionItemPattern)pat).Select();
+                System.Threading.Thread.Sleep(900);
+                Console.WriteLine("selected |" + want + "|");
+                return 0;
+            }
+            if (el.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out pat))
+            {
+                ((ExpandCollapsePattern)pat).Expand();
+                System.Threading.Thread.Sleep(900);
+                Console.WriteLine("expanded |" + want + "|");
+                return 0;
             }
 
-            ((InvokePattern)pat).Invoke();
-            System.Threading.Thread.Sleep(900);
-            Console.WriteLine("invoked |" + want + "| enabled=" + el.Current.IsEnabled);
-            return 0;
+            Console.WriteLine("NO_USABLE_PATTERN |" + want + "|");
+            return 13;
         }
 
         if (cmd == "uialist")
