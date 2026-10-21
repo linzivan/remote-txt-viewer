@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Windows.Automation;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -218,6 +219,46 @@ internal static class UiProbe
             return 0;
         }
 
+        if (cmd == "uia")
+        {
+            // 通过 UI Automation 直接 Invoke 工具栏按钮：不移动鼠标、不抢焦点
+            string want = args.Length > 2 ? args[2] : "";
+            AutomationElement rootEl = AutomationElement.FromHandle(hWnd);
+            if (rootEl == null) { Console.WriteLine("NO_UIA_ROOT"); return 11; }
+
+            Condition cond = new PropertyCondition(AutomationElement.NameProperty, want);
+            AutomationElement el = rootEl.FindFirst(TreeScope.Descendants, cond);
+            if (el == null) { Console.WriteLine("NO_UIA_ELEMENT |" + want + "|"); return 12; }
+
+            object pat;
+            if (!el.TryGetCurrentPattern(InvokePattern.Pattern, out pat))
+            {
+                Console.WriteLine("NO_INVOKE_PATTERN |" + want + "|");
+                return 13;
+            }
+
+            ((InvokePattern)pat).Invoke();
+            System.Threading.Thread.Sleep(900);
+            Console.WriteLine("invoked |" + want + "| enabled=" + el.Current.IsEnabled);
+            return 0;
+        }
+
+        if (cmd == "uialist")
+        {
+            AutomationElement rootEl = AutomationElement.FromHandle(hWnd);
+            if (rootEl == null) { Console.WriteLine("NO_UIA_ROOT"); return 11; }
+            AutomationElementCollection all = rootEl.FindAll(TreeScope.Descendants, Condition.TrueCondition);
+            int n = 0;
+            for (int i = 0; i < all.Count && n < 60; i++)
+            {
+                string nm = all[i].Current.Name;
+                if (string.IsNullOrEmpty(nm)) continue;
+                Console.WriteLine("  " + all[i].Current.ControlType.ProgrammaticName + " |" + nm + "| enabled=" + all[i].Current.IsEnabled);
+                n++;
+            }
+            return 0;
+        }
+
         if (cmd == "clickat")
         {
             int x = 0, y = 0;
@@ -227,8 +268,14 @@ internal static class UiProbe
             IntPtr ts = FindToolStrip(hWnd);
             IntPtr target = (ts != IntPtr.Zero) ? ts : hWnd;
             IntPtr lp = (IntPtr)((y << 16) | (x & 0xFFFF));
-            SendMessage(target, 0x0201, (IntPtr)1, lp);
-            SendMessage(target, 0x0202, IntPtr.Zero, lp);
+
+            // ToolStrip 要先收到 WM_MOUSEMOVE 才会把项置为 ActiveItem，
+            // 直接发 DOWN/UP 往往点不动（按钮的 Click 依赖鼠标捕获）
+            SendMessage(target, 0x0200, IntPtr.Zero, lp);          // WM_MOUSEMOVE
+            System.Threading.Thread.Sleep(120);
+            SendMessage(target, 0x0201, (IntPtr)1, lp);            // WM_LBUTTONDOWN
+            System.Threading.Thread.Sleep(80);
+            SendMessage(target, 0x0202, IntPtr.Zero, lp);          // WM_LBUTTONUP
             System.Threading.Thread.Sleep(1200);
             Console.WriteLine("clicked at " + x + "," + y + " on " + (ts != IntPtr.Zero ? "toolstrip" : "form"));
             return 0;
