@@ -9,7 +9,8 @@ namespace RemoteTxtViewer
     /// </summary>
     public class MonitorSession
     {
-        public AppConfig Conn;              // 连接配置（host/user/path/interval/encoding/hostKeyFp…）
+        public AppConfig Conn;              // 完整连接配置（服务器字段 + 本文件的 path/interval/encoding）
+        public AppConfig Item;              // 指向配置里的 [file.N] 条目，改间隔/路径时要同步写回
         public string Id = "";              // 稳定标识（由 host|user|path 派生），时间线目录用它
 
         // ---- 运行时 ----
@@ -38,9 +39,10 @@ namespace RemoteTxtViewer
 
         private ChangeLog _log;
 
-        public MonitorSession(AppConfig conn)
+        public MonitorSession(AppConfig conn, AppConfig item)
         {
             Conn = conn;
+            Item = item;
             Id = SessionStore.MakeId(conn);
         }
 

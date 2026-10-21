@@ -15,6 +15,7 @@ namespace RemoteTxtViewer
         public long Bytes;
         public bool IsBaseline;
         public bool IsLocalEdit;       // 由本机编辑保存产生（区别于远端变化）
+        public string Editor = "";     // 保存者（本机的 Windows 用户名）
         public string Text;            // 可能为 null，需要时从磁盘加载
     }
 
@@ -68,6 +69,12 @@ namespace RemoteTxtViewer
         public ChangeEntry Add(string text, DateTime serverMtime, int newLines, int totalLines,
                                bool baseline, bool localEdit)
         {
+            return Add(text, serverMtime, newLines, totalLines, baseline, localEdit, "");
+        }
+
+        public ChangeEntry Add(string text, DateTime serverMtime, int newLines, int totalLines,
+                               bool baseline, bool localEdit, string editor)
+        {
             if (text == null) text = "";
             lock (_sync)
             {
@@ -84,6 +91,7 @@ namespace RemoteTxtViewer
                 e.Bytes = Encoding.UTF8.GetByteCount(text);
                 e.IsBaseline = baseline;
                 e.IsLocalEdit = localEdit;
+                e.Editor = editor == null ? "" : editor;
                 e.Text = text;
 
                 try { File.WriteAllText(PathFor(id), text, new UTF8Encoding(false)); }
@@ -169,7 +177,8 @@ namespace RemoteTxtViewer
                       .Append(e.TotalLines).Append('\t')
                       .Append(e.Bytes).Append('\t')
                       .Append(e.IsBaseline ? "1" : "0").Append('\t')
-                      .Append(e.IsLocalEdit ? "1" : "0").Append('\n');
+                      .Append(e.IsLocalEdit ? "1" : "0").Append('\t')
+                      .Append(Uri.EscapeDataString(e.Editor == null ? "" : e.Editor)).Append('\n');
                 }
                 File.WriteAllText(_indexPath, sb.ToString(), new UTF8Encoding(false));
             }
@@ -213,6 +222,10 @@ namespace RemoteTxtViewer
                         e.Bytes = long.TryParse(f[5], out b) ? b : 0;
                         e.IsBaseline = (f[6] == "1");
                         e.IsLocalEdit = (f.Length >= 8 && f[7] == "1");
+                        if (f.Length >= 9 && f[8].Length > 0)
+                        {
+                            try { e.Editor = Uri.UnescapeDataString(f[8]); } catch { e.Editor = f[8]; }
+                        }
                         e.Text = null;
 
                         _entries.Add(e);

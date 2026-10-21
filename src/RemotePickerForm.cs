@@ -130,7 +130,14 @@ namespace RemoteTxtViewer
                 }
             };
 
-            bp.Controls.Add(_btnCancel);
+            Button bNew = new Button();
+            bNew.Text = "新建文件...";
+            bNew.Size = new Size(S(96), S(28));
+            bNew.Margin = new Padding(S(8), 0, 0, 0);
+            bNew.Click += delegate { NewRemoteFile(); };
+
+            bp.Controls.Add(_btnCancel);   // RightToLeft：先加的在最右
+            bp.Controls.Add(bNew);
             bp.Controls.Add(_btnOk);
 
             // ---- 顶部路径行 ----
@@ -177,6 +184,29 @@ namespace RemoteTxtViewer
                 _fetcher = null;
                 if (f != null) { try { f.Dispose(); } catch { } }
             };
+        }
+
+        /// <summary>在当前目录下新建一个文件（返回路径，实际创建由调用方在服务器上完成）。</summary>
+        private void NewRemoteFile()
+        {
+            using (PromptForm pf = new PromptForm("新建文件", "文件名（例如 notes.txt）：", "", _scale))
+            {
+                if (pf.ShowDialog(this) != DialogResult.OK) return;
+
+                string name = pf.Value == null ? "" : pf.Value.Trim();
+                if (name.Length == 0) return;
+
+                if (name.IndexOf('/') >= 0)
+                {
+                    MessageBox.Show(this, "只需填文件名，不要带路径。", "提示",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                SelectedPath = Combine(_current, name);
+                DialogResult = DialogResult.OK;
+                Close();
+            }
         }
 
         private void Accept(string fileName)

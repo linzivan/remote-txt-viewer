@@ -97,8 +97,8 @@ namespace RemoteTxtViewer
             CreateFonts();
             BuildUi();
 
-            for (int i = 0; i < _store.Sessions.Count; i++)
-                _sessions.Add(new MonitorSession(_store.Sessions[i]));
+            for (int i = 0; i < _store.Items.Count; i++)
+                _sessions.Add(new MonitorSession(_store.BuildConn(i), _store.Items[i]));
 
             RebuildTabs();
 
@@ -494,6 +494,7 @@ namespace RemoteTxtViewer
             int sec;
             if (!int.TryParse(txt, out sec) || sec < 1) return;
             _cur.Conn.IntervalSec = sec;
+            if (_cur.Item != null) _cur.Item.IntervalSec = sec;
             _store.Save();
         }
 
@@ -688,46 +689,65 @@ namespace RemoteTxtViewer
 
         // ---------- 新建 / 关闭 ----------
 
+        /// <summary>新建监控项：直接在这台服务器上选文件（或新建文件），不再让人重填服务器。</summary>
         private void NewSession()
         {
-            AppConfig def = new AppConfig();
-            if (_cur != null && _cur.Conn != null)
+            if (!_store.HasServer)
             {
-                def = _cur.Conn.Clone();
-                def.RemotePath = DirOf(_cur.Conn.RemotePath);   // 默认落在当前文件同目录
-                def.Password = _cur.Conn.Password;
+                if (MessageBox.Show(this, "还没有配置服务器连接。\r\n\r\n先去配置吗？", "新建监控项",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
+                    return;
+                EditServerSettings();
+                if (!_store.HasServer) return;
             }
 
-            using (SettingsForm dlg = new SettingsForm(def, _scale, true))
+            // 起点：当前文件所在目录（没有当前文件就从根目录）
+            string startDir = _cur == null ? "/" : DirOf(_cur.Conn.RemotePath);
+
+            AppConfig probeItem = new AppConfig();
+            probeItem.RemotePath = startDir;
+            AppConfig probe = _store.BuildConn(probeItem);
+
+            using (RemotePickerForm dlg = new RemotePickerForm(probe, _scale, startDir))
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
-
-                AppConfig nc = dlg.Result;
-                string id = SessionStore.MakeId(nc);
-                for (int i = 0; i < _sessions.Count; i++)
-                {
-                    if (SessionStore.MakeId(_sessions[i].Conn) == id)
-                    {
-                        MessageBox.Show(this, "这个文件已经在监控列表里了。", "提示",
-                            MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        _tabs.SelectedIndex = i;
-                        return;
-                    }
-                }
-
-                MonitorSession s = new MonitorSession(nc);
-                _sessions.Add(s);
-                _store.Sessions.Add(nc);
-
-                TabPage tp = new TabPage(s.Title);
-                tp.ToolTipText = s.Tooltip;
-                _tabs.TabPages.Add(tp);
-
-                _store.ActiveIndex = _sessions.Count - 1;
-                _store.Save();
-
-                _tabs.SelectedIndex = _sessions.Count - 1;   // 触发 OnTabChanged
+                if (string.IsNullOrEmpty(dlg.SelectedPath)) return;
+                AddSessionForPath(dlg.SelectedPath);
             }
+        }
+
+        /// <summary>为指定远程路径加一个标签；已存在则不重复添加。</summary>
+        private void AddSessionForPath(string remotePath)
+        {
+            for (int i = 0; i < _sessions.Count; i++)
+            {
+                if (_sessions[i].Conn.RemotePath == remotePath)
+                {
+                    _tabs.SelectedIndex = i;
+                    return;
+                }
+            }
+
+            AppConfig item = new AppConfig();
+            item.RemotePath = remotePath;
+            item.IntervalSec = _cur != null && _cur.Conn.IntervalSec > 0 ? _cur.Conn.IntervalSec : 3;
+            item.EncodingPref = (_cur != null && !string.IsNullOrEmpty(_cur.Conn.EncodingPref))
+                                ? _cur.Conn.EncodingPref : "auto";
+
+            AppConfig conn = _store.BuildConn(item);
+            MonitorSession s = new MonitorSession(conn, item);
+
+            _sessions.Add(s);
+            _store.Items.Add(item);
+
+            TabPage tp = new TabPage(s.Title);
+            tp.ToolTipText = s.Tooltip;
+            _tabs.TabPages.Add(tp);
+
+            _store.ActiveIndex = _sessions.Count - 1;
+            _store.Save();
+
+            _tabs.SelectedIndex = _sessions.Count - 1;   // 触发 OnTabChanged，会立即读一次
         }
 
         private void CloseCurrentSession()
@@ -753,7 +773,7 @@ namespace RemoteTxtViewer
             if (ReferenceEquals(s, _cur)) _cur = null;
 
             _sessions.RemoveAt(idx);
-            _store.Sessions.RemoveAt(idx);
+            _store.Items.RemoveAt(idx);
             _tabs.TabPages.RemoveAt(idx);
 
             if (_sessions.Count == 0)
@@ -802,32 +822,40 @@ namespace RemoteTxtViewer
             menu.Show(_tabs, pt);
         }
 
+        /// <summary>设置：改全局服务器连接（改完所有标签重连）+ 当前文件的路径/间隔/编码。</summary>
         private void EditCurrentSettings()
         {
-            if (_cur == null) { NewSession(); return; }
+            if (_cur == null) { EditServerSettings(); return; }
+
+            string oldPath = _cur.Conn.RemotePath;
+            string oldServerSig = ServerSig(_store.Server);
 
             using (SettingsForm dlg = new SettingsForm(_cur.Conn.Clone(), _scale, false))
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
                 AppConfig nc = dlg.Result;
-                string oldSig = Sig(_cur.Conn);
-                string newSig = Sig(nc);
+                bool serverChanged = (ServerSig(nc) != oldServerSig);
+                bool pathChanged = (nc.RemotePath != oldPath);
 
-                _cur.Conn = nc;
-                int idx = _sessions.IndexOf(_cur);
-                if (idx >= 0 && idx < _store.Sessions.Count) _store.Sessions[idx] = nc;
+                ApplyServerFields(nc);
+
+                _cur.Item.RemotePath = nc.RemotePath;
+                _cur.Item.IntervalSec = nc.IntervalSec;
+                _cur.Item.EncodingPref = nc.EncodingPref;
+                _cur.Conn = _store.BuildConn(_cur.Item);
+
                 _store.Save();
 
-                if (oldSig != newSig)
+                if (serverChanged) RebuildAllConnections();
+
+                if (serverChanged || pathChanged)
                 {
-                    // 换了服务器或文件：旧时间线不再适用
                     _cur.Log.Clear();
-                    _cur.LastStat = null;
                     _cur.LastText = "";
                     _cur.HasLoaded = false;
+                    _cur.LastStat = null;
                     _cur.ViewingEntry = null;
-                    _cur.DisposeFetcher();
                     RestoreUiState(_cur);
                     RefreshTimeline();
                 }
@@ -836,6 +864,73 @@ namespace RemoteTxtViewer
                 UpdateTabTitle(_cur);
                 ScheduleRefresh(_cur, true);
             }
+        }
+
+        /// <summary>只改服务器连接（没有打开任何文件时用）。</summary>
+        private void EditServerSettings()
+        {
+            AppConfig baseCfg = _cur != null ? _cur.Conn.Clone() : _store.Server.Clone();
+            if (_cur == null) baseCfg.RemotePath = "";
+            if (string.IsNullOrEmpty(baseCfg.Host)) baseCfg.Port = 22;
+
+            string oldServerSig = ServerSig(_store.Server);
+
+            using (SettingsForm dlg = new SettingsForm(baseCfg, _scale, false))
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                AppConfig nc = dlg.Result;
+                ApplyServerFields(nc);
+                _store.Save();
+
+                if (ServerSig(nc) != oldServerSig)
+                {
+                    RebuildAllConnections();
+                    if (_cur != null)
+                    {
+                        _cur.Log.Clear();
+                        _cur.LastText = "";
+                        _cur.HasLoaded = false;
+                        RestoreUiState(_cur);
+                        RefreshTimeline();
+                        ScheduleRefresh(_cur, true);
+                    }
+                }
+            }
+        }
+
+        private void ApplyServerFields(AppConfig src)
+        {
+            _store.Server.Host = src.Host;
+            _store.Server.Port = src.Port;
+            _store.Server.User = src.User;
+            _store.Server.Password = src.Password;
+            _store.Server.UseKey = src.UseKey;
+            _store.Server.KeyFile = src.KeyFile;
+            _store.Server.KeyPass = src.KeyPass;
+            _store.Server.HostKeyFp = src.HostKeyFp;
+        }
+
+        /// <summary>服务器变了：所有标签的连接都要重建（旧连接指向老机器）。</summary>
+        private void RebuildAllConnections()
+        {
+            for (int i = 0; i < _sessions.Count; i++)
+            {
+                MonitorSession s = _sessions[i];
+                s.DisposeFetcher();
+                s.Conn = _store.BuildConn(s.Item);
+                s.LastStat = null;
+                s.LastText = "";
+                s.HasLoaded = false;
+                s.ViewingEntry = null;
+            }
+        }
+
+        private static string ServerSig(AppConfig c)
+        {
+            return (c.Host == null ? "" : c.Host) + "|" + c.Port.ToString() + "|" +
+                   (c.User == null ? "" : c.User) + "|" +
+                   (c.UseKey ? "key:" + c.KeyFile : "pwd:" + c.Password);
         }
 
         private static string Sig(AppConfig c)
@@ -991,6 +1086,7 @@ namespace RemoteTxtViewer
             if (!string.IsNullOrEmpty(learnedFp))
             {
                 s.Conn.HostKeyFp = learnedFp;
+                _store.Server.HostKeyFp = learnedFp;   // 指纹是服务器级别的，写全局
                 _store.Save();
             }
 
@@ -1323,7 +1419,13 @@ namespace RemoteTxtViewer
             else when = e.LocalTime.ToString("MM-dd HH:mm");
 
             string what;
-            if (e.IsLocalEdit) what = "✎ 本机保存 " + e.TotalLines + "行";
+            if (e.IsLocalEdit)
+            {
+                // 显示保存者的 Windows 用户名，这样两台机器的时间线能区分是谁存的
+                string who = string.IsNullOrEmpty(e.Editor) ? "本机" : e.Editor;
+                if (who.Length > 14) who = who.Substring(0, 13) + "…";
+                what = "✎ " + who + " " + e.TotalLines + "行";
+            }
             else if (e.IsBaseline) what = "初始 " + e.TotalLines + "行";
             else if (e.NewLines > 0) what = "+" + e.NewLines + "行";
             else what = "内容变化";
@@ -1629,7 +1731,7 @@ namespace RemoteTxtViewer
             fake.EncodingName = remoteEnc;
             s.LastSnap = fake;
 
-            s.Log.Add(savedText, newMtime, -1, CountLines(savedText), false, true);
+            s.Log.Add(savedText, newMtime, -1, CountLines(savedText), false, true, Environment.UserName);
 
             if (ReferenceEquals(s, _cur))
             {

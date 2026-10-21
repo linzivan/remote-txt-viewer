@@ -164,7 +164,8 @@ internal static class UiProbe
         if (cmd == "setedit")
         {
             string text = args.Length > 2 ? args[2] : "";
-            IntPtr rtb = FindChildByClass(hWnd, "RichEdit");
+            IntPtr rtb = FindChildByClass(hWnd, "RICHEDIT50W");
+            if (rtb == IntPtr.Zero) rtb = FindChildByClass(hWnd, "RichEdit");
             if (rtb == IntPtr.Zero) { Console.WriteLine("NO_EDIT_CONTROL"); return 10; }
             SendMessageStr(rtb, 0x000C, IntPtr.Zero, text);   // WM_SETTEXT
             System.Threading.Thread.Sleep(400);
@@ -174,7 +175,8 @@ internal static class UiProbe
 
         if (cmd == "getedit")
         {
-            IntPtr rtb = FindChildByClass(hWnd, "RichEdit");
+            IntPtr rtb = FindChildByClass(hWnd, "RICHEDIT50W");
+            if (rtb == IntPtr.Zero) rtb = FindChildByClass(hWnd, "RichEdit");
             if (rtb == IntPtr.Zero) { Console.WriteLine("NO_EDIT_CONTROL"); return 10; }
             int len = (int)SendMessage(rtb, 0x000E, IntPtr.Zero, IntPtr.Zero);   // WM_GETTEXTLENGTH
             Console.WriteLine("editor chars=" + len);

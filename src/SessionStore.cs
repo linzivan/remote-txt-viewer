@@ -8,13 +8,16 @@ using System.Text;
 namespace RemoteTxtViewer
 {
     /// <summary>
-    /// 多会话配置：sessions.ini 用分节存放每个监控项 + 一份全局界面设置。
-    /// 首次运行时会自动把旧的单文件 config.ini 迁移成一个会话。
+    /// 配置模型：本软件一次只连一台服务器。
+    ///   [server]  全局服务器连接（主机/端口/账号/密码/密钥/指纹）
+    ///   [file.N]  每个监控文件只记录：路径 + 刷新间隔 + 编码
+    /// 旧版本（每会话各自带服务器配置）会自动迁移成这个结构。
     /// </summary>
     public class SessionStore
     {
-        public List<AppConfig> Sessions = new List<AppConfig>();
-        public AppConfig Ui = new AppConfig();     // 只用到界面字段(fontSize/follow/wordWrap/showTimeline/窗口)
+        public AppConfig Server = new AppConfig();                 // 只有连接字段有效
+        public List<AppConfig> Items = new List<AppConfig>();      // 只有 path/interval/encoding 有效
+        public AppConfig Ui = new AppConfig();                     // 界面字段
         public int ActiveIndex = 0;
 
         public static string StorePath
@@ -22,7 +25,33 @@ namespace RemoteTxtViewer
             get { return Path.Combine(AppConfig.ConfigDir, "sessions.ini"); }
         }
 
-        /// <summary>由 host|user|path 派生稳定 id，用来分时间线目录（路径不变则 id 不变）。</summary>
+        /// <summary>把「全局服务器」和「某个文件的设置」合成一份完整连接配置，供 SftpFetcher 使用。</summary>
+        public AppConfig BuildConn(AppConfig item)
+        {
+            AppConfig c = item == null ? new AppConfig() : item.Clone();
+            c.Host = Server.Host;
+            c.Port = Server.Port;
+            c.User = Server.User;
+            c.Password = Server.Password;
+            c.UseKey = Server.UseKey;
+            c.KeyFile = Server.KeyFile;
+            c.KeyPass = Server.KeyPass;
+            c.HostKeyFp = Server.HostKeyFp;
+            return c;
+        }
+
+        public AppConfig BuildConn(int index)
+        {
+            if (index < 0 || index >= Items.Count) return null;
+            return BuildConn(Items[index]);
+        }
+
+        public bool HasServer
+        {
+            get { return !string.IsNullOrEmpty(Server.Host) && !string.IsNullOrEmpty(Server.User); }
+        }
+
+        /// <summary>由 服务器+路径 派生稳定 id，用于分时间线目录。</summary>
         public static string MakeId(AppConfig c)
         {
             string key = (c.Host == null ? "" : c.Host) + "|" +
@@ -47,19 +76,24 @@ namespace RemoteTxtViewer
             {
                 try { st.Parse(StorePath); }
                 catch { }
-                return st;
+                if (st.Items.Count > 0 || st.HasServer) return st;
             }
 
-            // 首次升级：把旧的单文件 config.ini 迁移成一个会话
+            // 没有新配置：尝试从旧的单文件 config.ini 迁移
             try
             {
                 AppConfig old = AppConfig.Load();
                 if (old != null && old.IsReady)
                 {
-                    st.Sessions.Add(old);
+                    st.Server = old.Clone();
+                    AppConfig item = new AppConfig();
+                    item.RemotePath = old.RemotePath;
+                    item.IntervalSec = old.IntervalSec;
+                    item.EncodingPref = old.EncodingPref;
+                    st.Items.Add(item);
                     CopyUi(old, st.Ui);
                     st.ActiveIndex = 0;
-                    st.MigrateLegacyHistory(MakeId(old));
+                    st.MigrateLegacyHistory(MakeId(st.BuildConn(item)));
                     st.Save();
                 }
             }
@@ -87,6 +121,9 @@ namespace RemoteTxtViewer
             AppConfig cur = null;
             Dictionary<string, string> g = new Dictionary<string, string>();
 
+            // 旧格式（每会话都带服务器配置）先全部读进这个列表，最后统一迁移
+            List<AppConfig> legacy = new List<AppConfig>();
+
             string[] lines = File.ReadAllLines(path, Encoding.UTF8);
             for (int i = 0; i < lines.Length; i++)
             {
@@ -97,10 +134,16 @@ namespace RemoteTxtViewer
                 {
                     section = line.Substring(1, line.Length - 2).Trim();
                     cur = null;
-                    if (section.StartsWith("session."))
+                    if (section == "server") cur = Server;
+                    else if (section.StartsWith("file."))
                     {
                         cur = new AppConfig();
-                        Sessions.Add(cur);
+                        Items.Add(cur);
+                    }
+                    else if (section.StartsWith("session."))
+                    {
+                        cur = new AppConfig();
+                        legacy.Add(cur);
                     }
                     continue;
                 }
@@ -110,17 +153,34 @@ namespace RemoteTxtViewer
                 string k = line.Substring(0, eq).Trim();
                 string v = line.Substring(eq + 1);
 
-                if (cur != null) ApplyConn(cur, k, v);
+                if (cur != null) ApplyField(cur, k, v);
                 else if (section == "global") g[k] = v;
             }
 
             ApplyGlobal(g);
 
+            // 旧格式：取第一个会话的服务器信息作为全局服务器
+            if (legacy.Count > 0 && Items.Count == 0)
+            {
+                Server = legacy[0].Clone();
+                for (int i = 0; i < legacy.Count; i++)
+                {
+                    AppConfig item = new AppConfig();
+                    item.RemotePath = legacy[i].RemotePath;
+                    item.IntervalSec = legacy[i].IntervalSec <= 0 ? 3 : legacy[i].IntervalSec;
+                    item.EncodingPref = legacy[i].EncodingPref;
+                    Items.Add(item);
+                }
+                if (Ui.FontSize <= 0) CopyUi(legacy[0], Ui);
+                Save();   // 升级成新格式
+            }
+
             if (ActiveIndex < 0) ActiveIndex = 0;
-            if (ActiveIndex >= Sessions.Count) ActiveIndex = Sessions.Count == 0 ? 0 : Sessions.Count - 1;
+            if (ActiveIndex >= Items.Count) ActiveIndex = Items.Count == 0 ? 0 : Items.Count - 1;
         }
 
-        private static void ApplyConn(AppConfig c, string k, string v)
+        /// <summary>服务器段和文件段共用一套字段名，统一按名字落到对应属性上。</summary>
+        private static void ApplyField(AppConfig c, string k, string v)
         {
             switch (k)
             {
@@ -131,10 +191,10 @@ namespace RemoteTxtViewer
                 case "use_key": c.UseKey = (v.Trim() == "1"); break;
                 case "key_file": c.KeyFile = v.Trim(); break;
                 case "key_pass": c.KeyPass = AppConfig.UnprotectSecret(v.Trim()); break;
+                case "host_key_fp": c.HostKeyFp = v.Trim(); break;
                 case "remote_path": c.RemotePath = v.Trim(); break;
                 case "interval": c.IntervalSec = ParseInt(v, 3); break;
                 case "encoding": c.EncodingPref = v.Trim(); break;
-                case "host_key_fp": c.HostKeyFp = v.Trim(); break;
             }
         }
 
@@ -165,7 +225,7 @@ namespace RemoteTxtViewer
                 Directory.CreateDirectory(AppConfig.ConfigDir);
 
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine("# RemoteTxtViewer 多会话配置");
+                sb.AppendLine("# RemoteTxtViewer 配置（一次只连一台服务器）");
                 sb.AppendLine("# 密码与私钥口令用 Windows DPAPI 加密，换用户/换电脑需重填");
                 sb.AppendLine();
                 sb.AppendLine("[global]");
@@ -180,22 +240,25 @@ namespace RemoteTxtViewer
                 sb.AppendLine("win_h=" + Ui.WinH.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("win_max=" + (Ui.WinMax ? "1" : "0"));
 
-                for (int i = 0; i < Sessions.Count; i++)
+                sb.AppendLine();
+                sb.AppendLine("[server]");
+                sb.AppendLine("host=" + Server.Host);
+                sb.AppendLine("port=" + Server.Port.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("user=" + Server.User);
+                sb.AppendLine("password=" + AppConfig.ProtectSecret(Server.Password));
+                sb.AppendLine("use_key=" + (Server.UseKey ? "1" : "0"));
+                sb.AppendLine("key_file=" + Server.KeyFile);
+                sb.AppendLine("key_pass=" + AppConfig.ProtectSecret(Server.KeyPass));
+                sb.AppendLine("host_key_fp=" + Server.HostKeyFp);
+
+                for (int i = 0; i < Items.Count; i++)
                 {
-                    AppConfig c = Sessions[i];
+                    AppConfig f = Items[i];
                     sb.AppendLine();
-                    sb.AppendLine("[session." + i.ToString() + "]");
-                    sb.AppendLine("host=" + c.Host);
-                    sb.AppendLine("port=" + c.Port.ToString(CultureInfo.InvariantCulture));
-                    sb.AppendLine("user=" + c.User);
-                    sb.AppendLine("password=" + AppConfig.ProtectSecret(c.Password));
-                    sb.AppendLine("use_key=" + (c.UseKey ? "1" : "0"));
-                    sb.AppendLine("key_file=" + c.KeyFile);
-                    sb.AppendLine("key_pass=" + AppConfig.ProtectSecret(c.KeyPass));
-                    sb.AppendLine("remote_path=" + c.RemotePath);
-                    sb.AppendLine("interval=" + c.IntervalSec.ToString(CultureInfo.InvariantCulture));
-                    sb.AppendLine("encoding=" + c.EncodingPref);
-                    sb.AppendLine("host_key_fp=" + c.HostKeyFp);
+                    sb.AppendLine("[file." + i.ToString() + "]");
+                    sb.AppendLine("remote_path=" + f.RemotePath);
+                    sb.AppendLine("interval=" + (f.IntervalSec <= 0 ? 3 : f.IntervalSec).ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("encoding=" + (string.IsNullOrEmpty(f.EncodingPref) ? "auto" : f.EncodingPref));
                 }
 
                 File.WriteAllText(StorePath, sb.ToString(), new UTF8Encoding(false));
@@ -205,9 +268,9 @@ namespace RemoteTxtViewer
 
         // ---------------- 旧数据迁移 ----------------
 
-        /// <summary>把旧的 history/index.tsv + c_*.txt 搬到第一个会话的目录里。</summary>
         private void MigrateLegacyHistory(string firstId)
         {
+            if (string.IsNullOrEmpty(firstId)) return;
             try
             {
                 string root = Path.Combine(AppConfig.ConfigDir, "history");
@@ -231,8 +294,6 @@ namespace RemoteTxtViewer
             }
             catch { }
         }
-
-        // ---------------- 小工具 ----------------
 
         private static int ParseInt(string s, int dflt)
         {
