@@ -49,6 +49,33 @@
 
 ---
 
+## 首次运行提示"不安全"怎么办
+
+exe 是本地编译的，没有商业代码签名证书，所以 Windows 可能提示「Windows 已保护你的电脑」。
+
+**最快的办法**：点「更多信息」→「仍要运行」。每台机器每个文件一次，之后不再问。
+
+**如果 exe 是从别的机器拷过来 / 网盘下载的**：文件会带"来自网络"标记，SmartScreen 才会拦。
+解除锁定即可：
+
+- 右键 exe → 属性 → 底部勾选「解除锁定」→ 确定
+- 或命令行：`powershell -Command "Unblock-File '.\RemoteTxtViewer.exe'"`
+
+**内网多台机器**：exe 附带自签名证书 `RemoteTxtViewer.cer`，在每台机器跑一次
+
+    tools\trust-cert.bat
+
+导入后 Windows 会显示签名者 `RemoteTxtViewer Local Build`，不再标"未知发布者"，
+火绒等杀软对"有签名"的文件也更宽松。
+
+> 注意：自签名**不能**消除 SmartScreen 蓝屏——它只认 CA 签发且有下载信誉的证书。
+> 想彻底不弹只能买代码签名证书（OV 约千元/年且需累积信誉，EV 约数千元/年可立即通过）。
+
+重新编译后签名会丢，`build.bat` 已自动调用 `tools\sign.ps1` 补签；证书存在
+`CurrentUser\My`，不需要密码。
+
+---
+
 ## 快速开始
 
 1. 双击桌面「远程文本监视器」

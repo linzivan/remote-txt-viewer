@@ -17,4 +17,8 @@ icons/exe_icon_check.png
 
 # ---------- Python ----------
 __pycache__/
-*.pyc
+*.pyc
+
+# 代码签名私钥绝不入库（公钥 .cer 可以提交）
+*.pfx
+*.p12

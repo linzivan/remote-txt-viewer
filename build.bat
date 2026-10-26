@@ -27,7 +27,8 @@ echo Compiling ...
   /r:System.Security.dll ^
   /r:%SSHNET% ^
   /resource:%SSHNET%,Renci.SshNet.dll ^
-  src\AppConfig.cs src\SftpFetcher.cs src\ChangeLog.cs src\FavoritesStore.cs ^
+  src\AppConfig.cs src\SftpFetcher.cs src\ChangeLog.cs src\FavoritesStore.cs ^
+
   src\MonitorSession.cs src\SessionStore.cs ^
   src\PromptForm.cs src\Program.cs src\MainForm.cs src\SettingsForm.cs ^
   src\RemotePickerForm.cs src\FavoritesForm.cs src\ConflictForm.cs
@@ -39,3 +40,8 @@ if errorlevel 1 (
 
 echo [OK] built RemoteTxtViewer.exe
 for %%F in (RemoteTxtViewer.exe) do echo    size: %%~zF bytes
+
+rem 重新编译会丢掉签名，这里自动补上（证书在 CurrentUser\My，无需密码）
+if exist "tools\sign.ps1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "tools\sign.ps1" || echo    [WARN] signing failed
+)
